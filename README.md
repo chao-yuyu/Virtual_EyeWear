@@ -54,7 +54,7 @@ python main.py
 打開瀏覽器訪問：
 - **Web 界面**: http://localhost:8000
 - **API 文檔**: http://localhost:8000/docs
-- **健康檢查**: http://localhost:8000/health
+- **狀態檢查**: http://localhost:8000/health
 
 ## 📱 使用方法
 
@@ -130,7 +130,7 @@ curl -X POST \
 | GET | `/glasses/type/{type}` | 根據類型獲取眼鏡 |
 | POST | `/try-on` | 執行虛擬試戴 |
 | GET | `/results/{filename}` | 獲取處理結果 |
-| GET | `/health` | 健康檢查 |
+| GET | `/health` | 狀態檢查 |
 | DELETE | `/cleanup` | 清理臨時文件 |
 
 ## 📦 依賴項目
