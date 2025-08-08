@@ -211,6 +211,58 @@ async def try_on_glasses(
             message=f"處理過程中發生錯誤: {str(e)}"
         )
 
+@app.post("/debug-landmarks")
+async def debug_landmarks(image: UploadFile = File(..., description="人臉圖像文件")):
+    """調試端點：顯示面部特徵點檢測結果"""
+    
+    # 驗證文件類型
+    if not image.content_type.startswith('image/'):
+        raise HTTPException(status_code=400, detail="上傳的文件必須是圖像格式")
+    
+    # 生成唯一的文件名
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    unique_id = str(uuid.uuid4())[:8]
+    
+    try:
+        # 讀取上傳的圖像
+        contents = await image.read()
+        nparr = np.frombuffer(contents, np.uint8)
+        face_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if face_image is None:
+            raise HTTPException(status_code=400, detail="無法解析上傳的圖像")
+        
+        # 檢測面部特徵點
+        landmarks = glasses_service.detect_face_landmarks(face_image)
+        if landmarks is None:
+            raise HTTPException(status_code=400, detail="未檢測到人臉特徵點")
+        
+        # 繪製調試特徵點
+        debug_image = glasses_service.draw_debug_landmarks(face_image, landmarks)
+        
+        # 保存調試圖像
+        debug_filename = f"{timestamp}_{unique_id}_debug.jpg"
+        debug_path = os.path.join(RESULT_DIR, debug_filename)
+        cv2.imwrite(debug_path, debug_image)
+        
+        # 獲取眼部測量數據
+        eye_measurements = glasses_service.get_eye_measurements(landmarks)
+        
+        return {
+            "success": True,
+            "message": "特徵點檢測成功",
+            "debug_image_url": f"/results/{debug_filename}",
+            "measurements": {
+                "eye_angle": eye_measurements["eye_angle"],
+                "eyebrow_angle": eye_measurements["eyebrow_angle"],
+                "glasses_rotation_angle": eye_measurements["glasses_rotation_angle"],
+                "eye_center_distance": eye_measurements["eye_center_distance"]
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"處理失敗: {str(e)}")
+
 @app.get("/results/{filename}")
 async def get_result_image(filename: str):
     """獲取處理結果圖像"""

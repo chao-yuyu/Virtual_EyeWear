@@ -69,6 +69,38 @@ class GlassesTryOnService:
             return landmarks
         return None
     
+    def get_eyebrow_angle(self, landmarks: list) -> float:
+        """計算眉毛水平線的角度"""
+        # 使用更穩定的眉毛外側和內側點
+        # 左眉毛：從外側到內側
+        left_eyebrow_outer = landmarks[46]   # 左眉毛外側端點
+        left_eyebrow_inner = landmarks[70]   # 左眉毛內側端點
+        
+        # 右眉毛：從內側到外側  
+        right_eyebrow_inner = landmarks[300] # 右眉毛內側端點
+        right_eyebrow_outer = landmarks[276] # 右眉毛外側端點
+        
+        # 計算眉毛最穩定的兩點連線角度
+        # 使用左眉外側和右眉外側點，這些點通常比較穩定
+        eyebrow_angle = math.degrees(math.atan2(
+            right_eyebrow_outer[1] - left_eyebrow_outer[1],
+            right_eyebrow_outer[0] - left_eyebrow_outer[0]
+        ))
+        
+        # 作為備用，也計算內側點的角度
+        inner_angle = math.degrees(math.atan2(
+            right_eyebrow_inner[1] - left_eyebrow_inner[1],
+            right_eyebrow_inner[0] - left_eyebrow_inner[0]
+        ))
+        
+        # 使用兩個角度的平均值來增加穩定性
+        final_angle = (eyebrow_angle + inner_angle) / 2
+        
+        # 限制角度範圍，避免極端值
+        final_angle = max(-30, min(30, final_angle))
+        
+        return final_angle
+
     def get_eye_measurements(self, landmarks: list) -> dict:
         """精確測量眼部尺寸和位置"""
         # 關鍵特徵點索引
@@ -116,11 +148,18 @@ class GlassesTryOnService:
         nose_bridge_width = abs(left_eye_inner[0] - right_eye_inner[0])
         ideal_glasses_width = left_eye_width + right_eye_width + nose_bridge_width
         
-        # 計算眼睛的角度
+        # 計算眼睛的角度 (原來的方法)
         eye_angle = math.degrees(math.atan2(
             right_eye_center[1] - left_eye_center[1],
             right_eye_center[0] - left_eye_center[0]
         ))
+        
+        # 計算眉毛水平線角度 (新增)
+        eyebrow_angle = self.get_eyebrow_angle(landmarks)
+        
+        # 使用眉毛角度作為眼鏡旋轉角度，確保眼鏡與眉毛水平線平行
+        # 理想情況下，眉毛應該是水平的（角度為0），所以我們需要反向旋轉來校正
+        glasses_rotation_angle = -eyebrow_angle
         
         # 計算眼鏡中心位置
         glasses_center_x = (left_eye_center[0] + right_eye_center[0]) // 2
@@ -135,6 +174,8 @@ class GlassesTryOnService:
             'ideal_glasses_width': ideal_glasses_width,
             'nose_bridge_width': nose_bridge_width,
             'eye_angle': eye_angle,
+            'eyebrow_angle': eyebrow_angle,
+            'glasses_rotation_angle': glasses_rotation_angle,  # 新增：基於眉毛的旋轉角度
             'glasses_center': (glasses_center_x, glasses_center_y)
         }
     
@@ -322,7 +363,7 @@ class GlassesTryOnService:
             transformed_glasses, frame_mask, lens_mask = self.transform_glasses(
                 glasses_cropped, 
                 scale_factor, 
-                eye_measurements['eye_angle']
+                eye_measurements['glasses_rotation_angle']  # 使用基於眉毛的旋轉角度
             )
             
             # 8. 混合圖像（使用眼鏡配置中的透明度設置）
@@ -348,6 +389,72 @@ class GlassesTryOnService:
     def get_available_glasses(self) -> list:
         """獲取所有可用的眼鏡列表"""
         return self.glasses_manager.get_all_glasses()
+
+    def draw_debug_landmarks(self, image: np.ndarray, landmarks: list) -> np.ndarray:
+        """繪製調試用的眉毛和眼睛特徵點"""
+        debug_image = image.copy()
+        
+        # 關鍵眉毛特徵點
+        key_eyebrow_points = [
+            46,   # 左眉毛外側端點
+            70,   # 左眉毛內側端點
+            300,  # 右眉毛內側端點
+            276   # 右眉毛外側端點
+        ]
+        
+        # 眼睛特徵點
+        eye_points = [
+            # 左眼
+            33, 133, 159, 145,
+            # 右眼
+            362, 263, 386, 374
+        ]
+        
+        # 繪製關鍵眉毛點（紅色，較大）
+        for idx in key_eyebrow_points:
+            if idx < len(landmarks):
+                cv2.circle(debug_image, landmarks[idx], 5, (0, 0, 255), -1)
+                # 添加點的標籤
+                cv2.putText(debug_image, str(idx), 
+                           (landmarks[idx][0] + 10, landmarks[idx][1] - 10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+        
+        # 繪製眼睛點（綠色）
+        for idx in eye_points:
+            if idx < len(landmarks):
+                cv2.circle(debug_image, landmarks[idx], 3, (0, 255, 0), -1)
+        
+        # 繪製眉毛連線
+        try:
+            # 左眉毛外側和右眉毛外側的連線（藍色）
+            left_outer = landmarks[46]
+            right_outer = landmarks[276]
+            cv2.line(debug_image, left_outer, right_outer, (255, 0, 0), 2)
+            
+            # 左眉毛內側和右眉毛內側的連線（青色）
+            left_inner = landmarks[70]
+            right_inner = landmarks[300]
+            cv2.line(debug_image, left_inner, right_inner, (255, 255, 0), 2)
+            
+            # 計算和顯示角度信息
+            eyebrow_angle = self.get_eyebrow_angle(landmarks)
+            
+            # 顯示角度信息
+            cv2.putText(debug_image, f"Eyebrow Angle: {eyebrow_angle:.1f}°", 
+                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(debug_image, f"Glasses Rotation: {-eyebrow_angle:.1f}°", 
+                       (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            
+            # 添加說明
+            cv2.putText(debug_image, "Red: Eyebrow points, Green: Eye points", 
+                       (10, debug_image.shape[0] - 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(debug_image, "Blue: Outer eyebrow line, Cyan: Inner eyebrow line", 
+                       (10, debug_image.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            
+        except (IndexError, ZeroDivisionError):
+            pass
+        
+        return debug_image
 
 # 創建全局服務實例
 glasses_service = GlassesTryOnService() 
